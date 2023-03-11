@@ -24,10 +24,12 @@ enum compression_mode {
 
 #define DEFAULT_COMPRESSION_LEVEL 0
 #define DEFAULT_INPUT_BUF_SIZE 1024
-#define DEFAULT_COMPRESSION_WINDOW_SIZE 26
+#define DEFAULT_COMPRESSION_WINDOW_SIZE 15
 #define DEFAULT_COMPRESSION_MODE STATELESS
 #define DEFAULT_BENCHMARK_TYPE LATENCY
 #define DEFAULT_BENCHMARK_ITERATIONS 1000
+#define MILLION 1E3
+#define BILLION 1E9
 
 struct benchmark_info {
 	uint32_t level;
@@ -161,8 +163,10 @@ uint64_t measure_stateless_comp_latency(void)
 	size_t level_buf_size;
 	struct isal_zstream stream;
 	unsigned int rdtscp_dummy;
-	uint64_t start_time, end_time, latency;
+	// uint64_t start_time, end_time, latency;
 	int error;
+	struct timespec start_time, end_time;
+	uint64_t latency;
 
 	input_buf_size = global_benchmark_info.input_buf_size;
 	output_buf_size = ISAL_DEF_MAX_HDR_SIZE + input_buf_size;
@@ -201,11 +205,16 @@ uint64_t measure_stateless_comp_latency(void)
 	stream.hist_bits = global_benchmark_info.window_size;
 
 	/* Compress stream */
-	start_time = __rdtscp(&rdtscp_dummy);
+	clock_gettime(CLOCK_MONOTONIC, &start_time);
+	// start_time = __rdtscp(&rdtscp_dummy);
 	error = isal_deflate_stateless(&stream);
-	end_time = __rdtscp(&rdtscp_dummy);
-	latency = end_time - start_time;
+	// end_time = __rdtscp(&rdtscp_dummy);
+	clock_gettime(CLOCK_MONOTONIC, &end_time);
+	// latency = (end_time.tv_sec - start_time.tv_sec)
+	// 	+ (end_time.tv_nsec - start_time.tv_nsec)
+	// 	/ BILLION;
 
+	latency = (end_time.tv_nsec - start_time.tv_nsec) / MILLION;
 	/* Verify compression success */
 	if (error) {
 		fprintf(stderr, "error %d\n", error);
