@@ -8,7 +8,12 @@
 
 // Declarations
 
-#define OPTARGS "hl:m:t:n:w:i:"
+#define min(a,b) \
+   ({ __typeof__ (a) _a = (a); \
+       __typeof__ (b) _b = (b); \
+     _a < _b ? _a : _b; })
+
+#define OPTARGS "hl:m:t:n:w:i:f:"
 #define xstr(a) str(a)
 #define str(a) #a
 
@@ -22,12 +27,13 @@ enum compression_mode {
 	STATEFUL
 };
 
-#define DEFAULT_COMPRESSION_LEVEL 0
+#define DEFAULT_COMPRESSION_LEVEL 1
 #define DEFAULT_INPUT_BUF_SIZE 1024
 #define DEFAULT_COMPRESSION_WINDOW_SIZE 15
 #define DEFAULT_COMPRESSION_MODE STATELESS
 #define DEFAULT_BENCHMARK_TYPE LATENCY
 #define DEFAULT_BENCHMARK_ITERATIONS 1000
+#define DEFAULT_FILE_PATH ""
 #define MILLION 1E3
 #define BILLION 1E9
 
@@ -38,6 +44,7 @@ struct benchmark_info {
 	enum compression_mode mode;
 	enum benchmark_type type;
 	uint32_t iterations;
+	char *input_file_path;
 };
 
 static struct benchmark_info global_benchmark_info;
@@ -84,6 +91,7 @@ void set_default_benchmark_options(void)
 	global_benchmark_info.mode = DEFAULT_COMPRESSION_MODE;
 	global_benchmark_info.type = DEFAULT_BENCHMARK_TYPE;
 	global_benchmark_info.iterations = DEFAULT_BENCHMARK_ITERATIONS;
+	global_benchmark_info.input_file_path = DEFAULT_FILE_PATH;
 }
 
 void parse_cmd_line_args(int argc, char **argv) 
@@ -133,6 +141,9 @@ void parse_cmd_line_args(int argc, char **argv)
 		case 'i':
 			global_benchmark_info.iterations = atoi(optarg);
 			break;
+		case 'f':
+			global_benchmark_info.input_file_path = optarg;
+			break;
 		case 'h':
 		default:
 			usage();
@@ -151,6 +162,60 @@ void fill_buffer_rand(uint8_t *buf, size_t buf_size)
 	for (int i = 0; i < buf_size; i++) {
 		buf[i] = rand();
 	}
+}
+
+static int
+read_file_data(char *file_path, uint8_t *buf, size_t buf_size)
+{
+	FILE *f = fopen(file_path, "r");
+	int ret = -1;
+
+	if (f == NULL) {
+		printf("Input file could not be opened\n");
+		return -1;
+	}
+
+	if (fseek(f, 0, SEEK_END) != 0) {
+		printf("Size of input could not be calculated\n");
+		goto end;
+	}
+	size_t actual_file_sz = ftell(f);
+	/* If extended input data size has not been set,
+	 * input data size = file size
+	 */
+
+	if (buf_size == 0)
+		buf_size = actual_file_sz;
+
+	if (buf_size <= 0 || actual_file_sz <= 0 ||
+			fseek(f, 0, SEEK_SET) != 0) {
+		printf("Size of input could not be calculated\n");
+		goto end;
+	}
+
+	size_t remaining_data = buf_size;
+	uint8_t *data = buf;
+
+	while (remaining_data > 0) {
+		size_t data_to_read = min(remaining_data, actual_file_sz);
+
+		if (fread(data, data_to_read, 1, f) != 1) {
+			printf("Input file could not be read\n");
+			goto end;
+		}
+		if (fseek(f, 0, SEEK_SET) != 0) {
+			printf("Size of input could not be calculated\n");
+			goto end;
+		}
+		remaining_data -= data_to_read;
+		data += data_to_read;
+	}
+
+	ret = 0;
+
+end:
+	fclose(f);
+	return ret;
 }
 
 uint64_t measure_stateless_comp_latency(void)
@@ -190,7 +255,8 @@ uint64_t measure_stateless_comp_latency(void)
 		exit(0);
 	}
 
-	fill_buffer_rand(input_buf, input_buf_size);
+	// fill_buffer_rand(input_buf, input_buf_size);
+	read_file_data(global_benchmark_info.input_file_path, input_buf, input_buf_size);
 
 	isal_deflate_init(&stream);
 	stream.end_of_stream = 1;	/* Do the entire file at once */
@@ -263,7 +329,7 @@ void print_benchmark_options(void)
 
 int main(int argc, char **argv)
 {
-	uint64_t total_cycles;
+	uint64_t total_latency;
 
 	srand(time(NULL));
 
@@ -275,12 +341,12 @@ int main(int argc, char **argv)
 
 	if (global_benchmark_info.mode == STATELESS &&
 	  global_benchmark_info.type == LATENCY) {
-		total_cycles = 0;
+		total_latency = 0;
 		for (int i = 0; i < global_benchmark_info.iterations; i++) {
-			total_cycles += measure_stateless_comp_latency();
+			total_latency += measure_stateless_comp_latency();
 		}
-		printf("Average cycles: %lf\n",
-			total_cycles / (global_benchmark_info.iterations * 1.0));
+		printf("Average latency: %lf us\n",
+			total_latency / (global_benchmark_info.iterations * 1.0));
 	}
 
 	return 0;
